@@ -3,7 +3,7 @@ package arcane.ingestion
 import arcane.ingestion.BuildInfo
 import arcane.ingestion.Models.*
 import arcane.ingestion.api.v1.*
-import arcane.ingestion.common.LogAspect
+import arcane.ingestion.common.{LogAspect, StartupDiagnostics}
 import arcane.ingestion.config.AppConfig
 import arcane.ingestion.observability.{IngestionMetrics, ObservabilityLayers}
 import arcane.ingestion.service.*
@@ -85,12 +85,17 @@ object Main extends ZIOAppDefault {
         RequestServiceLive.live,
         PersistenceService.live,
         IcebergProvisioner.live,
-        // Observability: tag provider is always installed (metrics register in-memory even when
-        // no publisher is wired); the DataDog publisher is a conditional no-op controlled by
-        // `observability.datadog.enabled`.
         ObservabilityLayers.tagProviderLayer,
         IngestionMetrics.layer,
         ObservabilityLayers.publisherLayer
       )
-      .tapError(err => zlog(s"Fatal startup error: ${err.getMessage}"))
+      // handle failure gracefully, it also turns the failure into a plain non-zero exit rather than an unhandled fiber failure.
+      .foldCauseZIO(
+        cause =>
+          StartupDiagnostics.explain(cause) match
+            case Some(diagnosis) =>
+              ZIO.logError(diagnosis) *> ZIO.logDebugCause("Full startup cause", cause) *> exit(ExitCode.failure)
+            case None => ZIO.unit,
+        _ => ZIO.unit
+      )
 }

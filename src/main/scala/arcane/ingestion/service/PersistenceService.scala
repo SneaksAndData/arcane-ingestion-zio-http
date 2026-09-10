@@ -210,7 +210,8 @@ object DynamoDBServiceLive:
       .refineOrDie {
         case sdk: SdkClientException =>
           new IllegalStateException(
-            s"DynamoDB endpoint ${cfg.endpoint.getOrElse("<aws-default>")} is unreachable: ${sdk.getMessage}",
+            s"DynamoDB at ${cfg.endpoint.getOrElse("<aws-default>")} is unreachable " +
+              s"(region=${cfg.region}, table=${cfg.tableName}): ${sdk.getMessage}",
             sdk
           )
         case other => other
