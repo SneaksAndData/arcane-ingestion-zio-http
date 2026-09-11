@@ -3,7 +3,7 @@ package arcane.ingestion
 import arcane.ingestion.BuildInfo
 import arcane.ingestion.Models.*
 import arcane.ingestion.api.v1.*
-import arcane.ingestion.common.{LogAspect, StartupDiagnostics}
+import arcane.ingestion.common.LogAspect
 import arcane.ingestion.config.AppConfig
 import arcane.ingestion.observability.{IngestionMetrics, ObservabilityLayers}
 import arcane.ingestion.service.*
@@ -89,12 +89,18 @@ object Main extends ZIOAppDefault {
         IngestionMetrics.layer,
         ObservabilityLayers.publisherLayer
       )
-      // handle failure gracefully, it also turns the failure into a plain non-zero exit rather than an unhandled fiber failure.
+      // Startup builds the layers in parallel, so the first failure interrupts its siblings and ZIO
+      // would otherwise dump a fiber trace for every one of them — burying the actual cause. Report
+      // just that cause and exit non-zero; the full trace stays available at DEBUG.
       .foldCauseZIO(
         cause =>
-          StartupDiagnostics.explain(cause) match
-            case Some(diagnosis) =>
-              ZIO.logError(diagnosis) *> ZIO.logDebugCause("Full startup cause", cause) *> exit(ExitCode.failure)
+          cause.failureOption.orElse(cause.defects.headOption) match
+            case Some(error) =>
+              val message = Option(error.getMessage).filter(_.nonEmpty).getOrElse(error.toString)
+              ZIO.logError(s"Startup failed: $message") *>
+                ZIO.logDebugCause("Full startup cause", cause) *>
+                exit(ExitCode.failure)
+            // interruption-only: a sibling already reported the real failure
             case None => ZIO.unit,
         _ => ZIO.unit
       )
